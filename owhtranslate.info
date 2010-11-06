@@ -1,0 +1,13 @@
+; $Id $
+name = Owh Translate 
+description = Set up multilingual website. (Version 0.0 only supports English/Spanish.)
+core = 6.x
+version = "6.x-0.0"
+project = "Stars with Stripes"
+dependencies[] = "locale"
+dependencies[] = "translation"
+dependencies[] = "i18n"
+dependencies[] = "i18nmenu"
+dependencies[] = "i18ncontent"
+dependencies[] = "permission"
+

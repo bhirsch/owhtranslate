@@ -1,0 +1,208 @@
+<?php
+// $Id$
+
+// .module file doesn't load by default on install.
+require_once('owhtranslate.module');
+
+/**
+ * @file
+ *  owhtranslate.install
+ */
+
+/**
+ * Implementation of hook_install().
+ * 
+ * 0. Dependencies: 
+ *    - locale (core) 
+ *    - translation (core, Content Translation)
+ *    - i18nmenu
+ * 1. admin/settings/language/configure -> "path prefix with language fallback"
+ * 2. admin/settings/language -> add language 
+ * 3. Enable multilingual w/ translation for each content type
+ *    admin/content/node-type/[name]
+ * 4. Set all existing nodes to "English" (not "neutral")
+ * 5. Set all the current menu items in the Main Menu (Features Menu)
+ *    and Secondary Menu to "English" (not "all languages",
+ *    which means "neutral")
+ * todo? 6. Disable language neutral features/views.
+ * todo? 7. Enable multilingual features/views. 
+ * 8. Give Site Manager and Content Manager roles permission to create translations.
+ * 
+ * TODO uninstall(?)
+ */
+function owhtranslate_install() {
+  // 1. admin/settings/language/configure -> "path prefix with language fallback"
+  include_once './includes/locale.inc';
+  $form_state['values']['language_negotiation'] = 2;
+  $form_state['values']['op'] = 'Save settings';
+  drupal_execute('locale_languages_configure_form', $form_state);
+
+  // 2. admin/settings/language -> add language 
+  // todo Add prompt for user to select language, for now, just add Spanish
+  include_once './includes/locale.inc';
+  $form_state['values']['langcode'] = 'es';
+  $form_state['values']['op'] = 'Add language';
+  drupal_execute('locale_languages_predefined_form', $form_state);
+
+  // 3. Enable multilingual w/ translation for each content type
+  // Load content_types.inc from the node module.
+  $types = node_get_types();
+  foreach ($types as $type) {
+    // todo note: this (below) doesn't work here: (does this matter?)
+    //   $type->language_content_type = 2; 
+    //   node_type_save($type);
+    $var = 'language_content_type_'. $type->type;
+    variable_set($var, 2); // 2 = multilingual with translation
+  }
+
+  // 4. Set all existing nodes (except news_clip) to "English" (not "neutral")
+  // todo Enable user to set a default language. For now, use English.
+  $results = db_query("SELECT nid FROM {node} ");
+  while ($row = db_fetch_object($results)) {
+    $node = node_load($row->nid);
+    if (!$node->language && $node->type != 'news_clip') {
+      $node->language = 'en';
+      node_save($node); 
+    }
+  }
+
+  // 5. Set all the current menu items in the Main Menu (Features Menu)
+  //    and Secondary Menu to "English" (not "all languages", which means "neutral")
+  // features menu
+  $features = menu_tree_all_data('features');
+  foreach($features as $menu) {
+    //todo revisit this. @see owhtranslate_menu_to_english().
+    //$original_item = $menu['link'];
+    //owhtranslate_menu_to_english($original_item);
+    $mlid = $menu['link']['mlid'];
+    owhtranslate_menu_lang($mlid, 'en'); 
+  }
+  // secondary menu
+  $secondary = menu_tree_all_data('secondary-links');
+  foreach($secondary as $menu) {
+    //todo revisit this. @see owhtranslate_menu_to_english().
+    //$original_item = $menu['link'];
+    //owhtranslate_menu_to_english($original_item);
+    $mlid = $menu['link']['mlid'];
+    owhtranslate_menu_lang($mlid, 'en'); 
+  }
+
+/********* 
+  todo Revisit options for automating multi-lingual sites: 
+  - It seems like non-multi sites can run fine with language aware Views.
+    It would be great if we could keep one unified code base and not have to 
+    maintain multi Views separate from single language Views. 
+    todo Verify that Views perform okay with the broken/missing handlers.  
+  - There seem to be two ways to automate setting up multi Menus: 
+    (A) http://www.computerminds.co.uk/multilingual-views-drupal-when-using-i18n-module
+    (B) i18nmenus
+    (B) seems preferable but we haven't been able to successfully automate 
+        this yet with drupal_execute(). Revisit.   
+//*******/
+
+  // 6. Disable language neutral features/views.
+  // 7. Enable multilingual features/views. 
+
+  // permissions: locale
+  $new_perm[] = 'translate interface';
+  // permissions:  translation
+  $new_perm[] = 'translate content';
+  // permissions: internatinoalization  (none)
+  permission_update_perm('content manager', $new_perm);
+  permission_update_perm('site manager', $new_perm);
+}
+
+/**
+ * Implementation of hook_uninstall().
+ * 
+ * Put things back the way they were. 
+ */
+function owhtranslate_uninstall() {
+  /*****
+  // todo This may all be unnecessary. Maybw we should 
+  // Set all existing nodes to language neutral. 
+  // just lLet translation modules
+  // decide what to do here.
+  $results = db_query("SELECT nid FROM {node} ");
+  while ($row = db_fetch_object($results)) {
+    $node = node_load($row->nid);
+    $node->language = '';
+    node_save($node); 
+  }
+
+  // admin/settings/language/configure 
+  // reset to default: "none"
+  include_once './includes/locale.inc';
+  $form_state['values']['language_negotiation'] = 0;
+  $form_state['values']['op'] = 'Save settings';
+  drupal_execute('locale_languages_configure_form', $form_state);
+
+  // todo delete spanish 
+  // Disable multilingual w/ translation for each content type
+  $types = node_get_types();
+  foreach ($types as $type) {
+    $var = 'language_content_type_'. $type->type;
+    variable_set($var, 0); // 2 = multilingual with translation
+  }
+  // *******/
+}
+
+
+/**
+ * This function tries to use drupal_execute() to 
+ * update language settings of menu_items.
+ * 
+ * For some reason it always creates a new menu item
+ * rather than editing an existing one. 
+ * 
+ * The work around is to update the menu_links table
+ * directly during owhtranslate_install(). But this makes
+ * me a little nervous that one day changes to i18nmenu module
+ * will break this. Revisit. todo BH 8/21/10
+ */
+/*
+function owhtranslate_menu_to_english($menu) {
+  // required
+
+  $form_state['values']['menu']['menu_name'] = $menu['menu_name'];
+  $form_state['values']['menu']['weight'] = $menu['weight'];
+  $form_state['values']['menu']['expanded'] = $menu['expanded'];
+  $form_state['values']['menu']['options'] = array(
+    'attributes' => array('title' => ''),
+    'alter' => TRUE,
+    'langcode' => 'en', // English 
+  );
+  $form_state['values']['menu']['mlid'] = $menu['mlid'];
+  $form_state['values']['menu']['plid'] = $menu['plid'];
+  $form_state['values']['menu']['router_path'] = $menu['router_path'];
+
+  $form_state['values']['menu']['language'] = 'en'; // English
+  $form_state['values']['menu']['_external'] = $menu['external'];
+  $form_state['values']['menu']['link_path'] = $menu['link_path'];
+
+  $form_state['values']['menu']['module'] = $menu['module'];
+  $form_state['values']['menu']['has_children'] = $menu['has_children'];
+  $form_state['values']['menu']['customized'] = $menu['customized'];
+  $form_state['values']['menu']['original_item'] = $menu;
+  $form_state['values']['menu']['description'] = $menu['description'];
+//  $form_state['values']['menu']['parent'] =
+  $form_state['values']['menu']['hidden'] = $menu['hidden'];
+  $form_state['values']['menu']['updated'] = $menu['updated'];
+  $form_state['values']['menu']['p1'] = $menu['p1'];
+  $form_state['values']['menu']['p2'] = $menu['p2'];
+  $form_state['values']['menu']['p3'] = $menu['p3'];
+  $form_state['values']['menu']['p4'] = $menu['p4'];
+  $form_state['values']['menu']['p5'] = $menu['p5'];
+  $form_state['values']['menu']['p6'] = $menu['p6'];
+  $form_state['values']['menu']['p7'] = $menu['p7'];
+  $form_state['values']['menu']['p8'] = $menu['p8'];
+  $form_state['values']['menu']['p9'] = $menu['p9'];
+  $form_state['values']['menu']['depth'] = $menu['depth'];
+  //$form_state['values']['menu']['parts'] = ;
+  $form_state['values']['menu']['op'] = 'Save';
+
+//dsm($form_state);
+  drupal_execute('menu_edit_item', $form_state);
+}
+ *********/
+
